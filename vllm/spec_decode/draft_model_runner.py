@@ -10,6 +10,7 @@ from vllm.model_executor.layers.sampler import SamplerOutput
 try:
     try:
         from vllm.attention.backends.flash_attn import FlashAttentionMetadata
+        from vllm.attention.backends.mla.common import MLACommonMetadata
     except (ModuleNotFoundError, ImportError):
         # vllm_flash_attn is not installed, try the ROCm FA metadata
         from vllm.attention.backends.rocm_flash_attn import (
@@ -17,7 +18,7 @@ try:
 except (ModuleNotFoundError, ImportError) as err:
     raise RuntimeError(
         "Draft model speculative decoding currently only supports "
-        "CUDA and ROCm flash attention backend.") from err
+        "CUDA and ROCm flash attention, MLA attention backend.") from err
 
 from vllm.logger import init_logger
 from vllm.multimodal import MultiModalKwargs
@@ -86,7 +87,7 @@ class TP1DraftModelRunner(ModelRunnerWrapperBase):
 
         # Update attn_metadata
         attn_metadata = model_input.attn_metadata
-        assert isinstance(attn_metadata, FlashAttentionMetadata)
+        assert isinstance(attn_metadata, (FlashAttentionMetadata, MLACommonMetadata))
 
         attn_metadata.advance_step(model_input, sampled_token_ids,
                                    self.block_size, num_seqs, num_queries)
@@ -133,7 +134,7 @@ class TP1DraftModelRunner(ModelRunnerWrapperBase):
     def supports_gpu_multi_step(self, execute_model_req: ExecuteModelRequest):
         """Determines if draft_model_runner GPU multi-step can be used.
         Currently required conditions are:
-            1. Only decodes 
+            1. Only decodes
             2. Only flash-attn
             3. No LORA
             4. No prompt_adapter_config
@@ -171,12 +172,12 @@ class TP1DraftModelRunner(ModelRunnerWrapperBase):
         num_steps: int = 1,
         **kwargs,
     ) -> Optional[List[SamplerOutput]]:
-        """Executes num_steps forward passes with advacement of input tensors 
+        """Executes num_steps forward passes with advacement of input tensors
         on the GPU. Look at supports_gpu_multi_step(..) for pre-conditions.
 
         Optimizations used:
             1. Input tensors are updated on the GPU directly
-            2. Skips GPU=>CPU serialization of sampler outputs (we don't need 
+            2. Skips GPU=>CPU serialization of sampler outputs (we don't need
                 them since we do batch expansion later that uses GPU outputs)
             3. Reuses sampling tensors (since we run only decodes and they have
                 a repeating sampling logic)
